@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <inttypes.h>
 #include <sys/errno.h>
 #include <sys/time.h>
 #include <time.h>
@@ -18,17 +19,15 @@
 #define NUM_THREADS 20
 #endif
 
-// amount of iterations to do nothing:
-#define BABOON_CREATE_STALL_TIME  10000
-#define CROSS_ROPE_STALL_TIME  100000
-
 typedef enum {None, Xing_AtoB, Xing_BtoA} direction;
+
+typedef struct _thread_data_t {
+	int tid;//thread id
+} thread_data_t;
 
 // functions:
 void *ToB(void *arg);
 void *ToA(void *arg);
-
-void stall(int iterations);
 
 void semwait(sem_t *sem);//error-checked semaphore wait
 void semsignal(sem_t *sem);//error-checked semaphore signal
