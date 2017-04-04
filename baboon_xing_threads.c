@@ -13,8 +13,9 @@ direction CrossingDirection;
 
 int main(int argc, char *argv[]) {
   pthread_t threads[NUM_THREADS];
+  thread_data_t thread_data[NUM_THREADS];
   int error_check;
-  direction atob_or_btoa;
+  direction baboon_sequence[NUM_THREADS];
 
   //initialize semaphores
 	if (sem_init(&AtoB, 0, (unsigned int)0) < 0
@@ -28,36 +29,54 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < NUM_THREADS; i++) {
     void *thread_func;//the function to call
 
-    atob_or_btoa = (rand()%2) ? Xing_AtoB : Xing_BtoA;
+    baboon_sequence[i] = (rand()%2) ? Xing_AtoB : Xing_BtoA;
+    thread_data[i].tid = i;
 
-    if (atob_or_btoa == Xing_AtoB) {//if random amount < 0
+    if (baboon_sequence[i] == Xing_AtoB) {//if random amount < 0
       thread_func = ToB;
     }
     else {//else amount > 0
       thread_func = ToA;
     }
-    if ((error_check = pthread_create(&threads[i], NULL, thread_func, &i))) {
+    if ((error_check = pthread_create(&threads[i], NULL, thread_func, &thread_data[i]))) {
       fprintf(stderr, "error: pthread_create, %d\n", error_check);
       return EXIT_FAILURE;
     }
-    stall(BABOON_CREATE_STALL_TIME);
   }
 
-  for (int i = 0; i < NUM_THREADS; ++i) {
+  printf("About to join threads\n");
+  fflush(stdout);
+
+  for (int i = 0; i < NUM_THREADS; i++) {
     if ((error_check = pthread_join(threads[i], NULL))) {
       fprintf(stderr, "error: pthread_join, %d\n", error_check);
     }
   }
 
+  printf("Everybody was able to cross\n");
+  printf("Baboon Creation Sequence:\n");
+
+  for (int i = 0; i < NUM_THREADS; i++) {
+    if (baboon_sequence[i] == Xing_AtoB) {
+      printf("A to B");
+    }
+    else {
+      printf("B to A");
+    }
+    printf(",");
+  }
+  printf("\n");
+
   return EXIT_SUCCESS;
 }
 
 void *ToB(void *arg) {
-  int *tid = (int)arg;
-	semwait(&mutex);
-
+  thread_data_t *baboon_data = (thread_data_t *)arg;
+  int tid = baboon_data->tid;
   printf("Baboon A to B %d Created\n", tid);
   fflush(stdout);
+
+  semwait(&mutex);
 
   // Continue in same direction, or start going in this direction
   // Crossing direction = (AtoB or none) and Crossing count < 5, and total < 10:
@@ -87,12 +106,11 @@ void *ToB(void *arg) {
 
   printf("A to B crossing %d\n", tid);
   fflush(stdout);
-  stall(CROSS_ROPE_STALL_TIME);
-  printf("A to B successfully crossed %d\n", tid);
-  fflush(stdout);
   semwait(&mutex);
   CrossedCount++;
   CrossingCount--;
+  printf("A to B successfully crossed %d\n", tid);
+  fflush(stdout);
 
   // keep going in this direction
   // nonzero AtoBWaitCount and (total <10 or (total >= 10 and BtoAWaitCount = 0):
@@ -128,11 +146,12 @@ void *ToB(void *arg) {
 }
 
 void *ToA(void *arg) {
-  int tid = (int)arg;
-	semwait(&mutex);
-
+  thread_data_t *baboon_data = (thread_data_t *)arg;
+  int tid = baboon_data->tid;
   printf("Baboon B to A %d Created\n", tid);
   fflush(stdout);
+
+	semwait(&mutex);
 
   // Continue in same direction, or start going in this direction
   // Crossing direction = (BtoA or none) and Crossing count < 5, and total < 10:
@@ -160,12 +179,13 @@ void *ToA(void *arg) {
     semsignal(&mutex);
   }
 
-  stall(CROSS_ROPE_STALL_TIME);
-  printf("B to A successfully crossed %d\n", tid);
+  printf("B to A crossing %d\n", tid);
   fflush(stdout);
   semwait(&mutex);
   CrossedCount++;
   CrossingCount--;
+  printf("B to A successfully crossed %d\n", tid);
+  fflush(stdout);
 
   // keep going in this direction
   // nonzero BtoAWaitCount and (total <10 or (total >= 10 and BtoAWaitCount = 0):
@@ -198,12 +218,6 @@ void *ToA(void *arg) {
   }
 
   pthread_exit(NULL);
-}
-
-void stall(int iterations) {
-  int i;
-  while(i < iterations)
-    i++;
 }
 
 void semwait(sem_t *sem) {
