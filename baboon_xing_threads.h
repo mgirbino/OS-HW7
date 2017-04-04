@@ -8,17 +8,18 @@
 #include <unistd.h>
 
 #ifndef NUM_THREADS
-#define NUM_THREADS 200
+#define NUM_THREADS 20
 #endif
 
-extern const unsigned int RAND_RANGE;
+// amount of iterations to do nothing:
+#define BABOON_CREATE_STALL_TIME  10000
+#define CROSS_ROPE_STALL_TIME  100000
+
+typedef enum {None, Xing_AtoB, Xing_BtoA} direction;
 
 // functions:
-void baboon_fork(int atob_or_btoa);
-void ToB();
-void ToA();
+void *ToB(void *arg);
+void *ToA(void *arg);
 
-typedef struct _thread_data_t {
-	int tid;//thread id
-	int amount;//amount to deposit or withdraw
-} thread_data_t;
+void semwait(sem_t *sem);//error-checked semaphore wait
+void semsignal(sem_t *sem);//error-checked semaphore signal
