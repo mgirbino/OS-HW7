@@ -3,188 +3,128 @@
 
 #include "baboon_crossing.h"
 
-int main(int argc, char *argv[])
-{
-  union semun semaphore_values;
-  unsigned short semaphore_init_values[NUMBER_OF_SEMAPHORES];
-  semaphore_init_values[SEMAPHORE_MUTEX] = 1;
-  semaphore_init_values[SEMAPHORE_AtoB] = 0;
-  semaphore_init_values[SEMAPHORE_BtoA] = 0;
-  semaphore_values.array = semaphore_init_values;
+sem_t AtoB, BtoA, mutex;
 
-  // creating semaphores:
-  int semid = get_semid((key_t)SEMAPHORE_KEY);
-  if (semctl(semid, SEMAPHORE_MUTEX, SETALL, semaphore_values) == -1)
-  {
-    perror("semctl failed");
-    exit(EXIT_FAILURE);
-  }
+int CrossingCount;
+int CrossedCount;
+int AtoBWaitCount;
+int BtoAWaitCount;
+direction CrossingDirection;
 
-  // creating shared memory:
-  int shmid = get_shmid((key_t)SEMAPHORE_KEY);
-  struct shared_variable_struct * shared_variables = shmat(shmid, 0, 0);
+int main(int argc, char *argv[]) {
+  pthread_t threads[NUM_THREADS];
+  int error_check;
+  enum direction atob_or_btoa;
 
-  shared_variables->CrossingCount     = 0;
-  shared_variables->CrossedCount      = 0;
-  shared_variables->AtoBWaitCount     = 0;
-  shared_variables->BtoAWaitCount     = 0;
-  shared_variables->CrossingDirection = None;
-
-  // random number of baboons (bounded):
-  const int number_of_baboons =
-    (rand() % (MAX_NUMBER_OF_BABOONS + 1 - MIN_NUMBER_OF_BABOONS)) +
-    MIN_NUMBER_OF_BABOONS;
-
-  printf("%d Baboons created\n", number_of_baboons);
+  //initialize semaphores
+	if (sem_init(&AtoB, 0, (unsigned int)0) < 0
+		|| sem_init(&BtoA, 0, (unsigned int)0) < 0
+		|| sem_init(&mutex, 0, (unsigned int)1) < 0) {
+		perror("sem_init");
+		exit(EXIT_FAILURE);
+	}
 
   // Random distribution of baboons:
-  for (int i = 0; i < number_of_baboons; i++)
-  {
-    if (rand() % 2)
-    {
-      printf("Baboon A to B\n");
-      baboon_fork(BABOONAtoB);
+  for (int i = 0; i < NUM_THREADS; i++) {
+    void *thread_func;//the function to call
+
+    atob_or_btoa = (getRand()%2) ? Xing_AtoB : Xing_BtoA;
+
+    if (atob_or_btoa == Xing_AtoB) {//if random amount < 0
+      thread_func = ToB;
     }
-    else
-    {
-      printf("Baboon B to A\n");
-      baboon_fork(BABOONBtoA);
+    else {//else amount > 0
+      thread_func = ToA;
+    }
+    if ((errorCheck = pthread_create(&threads[i], NULL, thread_func, &i))) {
+      fprintf(stderr, "error: pthread_create, %d\n", errorCheck);
+      return EXIT_FAILURE;
     }
     stall(BABOON_CREATE_STALL_TIME);
   }
 
-  // waiting for processes to exit:
-  for (int i = 0; i < number_of_baboons; i++)
-  {
-    wait(NULL);
-  }
-  printf("Crossing Finished\n");
-
-  // detach shared memory:
-  if (shmdt(shared_variables) == -1)
-  {
-    perror("shmdt failed");
-    exit(EXIT_FAILURE);
+  for (int i = 0; i < NUM_THREADS; ++i) {
+    if ((errorCheck = pthread_join(threads[i], NULL))) {
+      fprintf(stderr, "error: pthread_join, %d\n", errorCheck);
+    }
   }
 
-  // these are also necessary:
-  if (shmctl(shmid, IPC_RMID, NULL) < 0)
-  {
-    perror("shmctrl failed");
-    exit(EXIT_FAILURE);
-  }
+  return EXIT_SUCCESS;
 }
 
-void baboon_fork(int atob_or_btoa)
-{
-  pid_t child_pid;
-  child_pid = fork();
-  if (child_pid == -1)
-  {
-    perror("Fork Failed");
-    exit(EXIT_FAILURE);
-  }
-  // Child:
-  else if (!child_pid)
-  {
-    if (atob_or_btoa == BABOONAtoB)
-    {
-      ToB();
-      exit(EXIT_SUCCESS);
-    }
-    else if (atob_or_btoa == BABOONBtoA)
-    {
-      ToA();
-      exit(EXIT_SUCCESS);
-    }
-    else
-    {
-      perror("Invalid Baboon");
-      exit(EXIT_FAILURE);
-    }
-  }
-  // Parent:
-  else
-  {
-    return;
-  }
-}
+void *ToB(void *arg) {
+  int tid = (int *)arg;
+	semwait(&mutex);
 
-void ToB(void)
-{
-  int semid = get_semid((key_t)SEMAPHORE_KEY);
-  int shmid = get_shmid((key_t)SEMAPHORE_KEY);
-  struct shared_variable_struct * shared_variables = shmat(shmid, 0, 0);
-  semaphore_wait(semid, SEMAPHORE_MUTEX);
+  printf("Baboon A to B %d Created\n", tid);
+  fflush(stdout);
 
   // Continue in same direction, or start going in this direction
   // Crossing direction = (AtoB or none) and Crossing count < 5, and total < 10:
-  if ((shared_variables->CrossingDirection == AtoB || shared_variables->CrossingDirection == None) &&
-    shared_variables->CrossingCount < 5 && (shared_variables->CrossedCount + shared_variables->CrossingCount) < 10)
-  {
-    printf("A to B about to cross %d\n", getpid());
-    shared_variables->CrossingDirection = AtoB;
-    shared_variables->CrossingCount++;
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
+  if ((CrossingDirection == Xing_AtoB || CrossingDirection == None) &&
+    CrossingCount < 5 && (CrossedCount + CrossingCount) < 10) {
+    printf("A to B about to cross %d\n", tid);
+    fflush(stdout);
+    CrossingDirection = Xing_AtoB;
+    CrossingCount++;
+    semsignal(&mutex);
   }
   // wait to cross:
-  else
-  {
-    printf("A to B waiting to cross %d\n", getpid());
-    shared_variables->AtoBWaitCount++;
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
-    semaphore_wait(semid, SEMAPHORE_AtoB);
+  else {
+    printf("A to B waiting to cross %d\n", tid);
+    fflush(stdout);
+    AtoBWaitCount++;
+    semsignal(&mutex);
+    semwait(&AtoB);
 
-    printf("A to B about to cross %d\n", getpid());
-    shared_variables->AtoBWaitCount--;
-    shared_variables->CrossingCount++;
-    shared_variables->CrossingDirection = AtoB;
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
+    printf("A to B about to cross %d\n", tid);
+    fflush(stdout);
+    AtoBWaitCount--;
+    CrossingCount++;
+    CrossingDirection = Xing_AtoB;
+    semsignal(&mutex);
   }
 
-  printf("A to B crossing %d\n", getpid());
+  printf("A to B crossing %d\n", tid);
+  fflush(stdout);
   stall(CROSS_ROPE_STALL_TIME);
-  printf("A to B successfully crossed %d\n", getpid());
-  semaphore_wait(semid, SEMAPHORE_MUTEX);
-  shared_variables->CrossedCount++;
-  shared_variables->CrossingCount--;
+  printf("A to B successfully crossed %d\n", tid);
+  fflush(stdout);
+  semwait(&mutex);
+  CrossedCount++;
+  CrossingCount--;
 
   // keep going in this direction
   // nonzero AtoBWaitCount and (total <10 or (total >= 10 and BtoAWaitCount = 0):
-  if (shared_variables->AtoBWaitCount != 0 &&
-    (((shared_variables->CrossedCount + shared_variables->CrossingCount) < 10) ||
-    ((shared_variables->CrossedCount + shared_variables->CrossingCount) >= 10 &&
-    shared_variables->BtoAWaitCount == 0)))
-  {
-    semaphore_signal(semid,SEMAPHORE_AtoB);
+  if (AtoBWaitCount != 0 &&
+    (((CrossedCount + CrossingCount) < 10) ||
+    ((CrossedCount + CrossingCount) >= 10 &&
+    BtoAWaitCount == 0))) {
+    semsignal(&AtoB)
   }
   // switch directions
   // none crossing and nonzero BtoAWaitCount and (AtoBWaitCount = 0 or total >= 10):
-  else if (shared_variables->CrossingCount == 0 && shared_variables->BtoAWaitCount !=0 &&
-    (shared_variables->AtoBWaitCount == 0 ||
-      (shared_variables->CrossedCount + shared_variables->CrossingCount) >= 10))
-  {
-    shared_variables->CrossingDirection = BtoA;
-    shared_variables->CrossedCount = 0;
-    semaphore_signal(semid, SEMAPHORE_BtoA);
+  else if (CrossingCount == 0 && BtoAWaitCount !=0 &&
+    (AtoBWaitCount == 0 ||
+      (CrossedCount + CrossingCount) >= 10)) {
+    CrossingDirection = Xing_BtoA;
+    CrossedCount = 0;
+    semsignal(&BtoA);
   }
   // change direction to none
   // none waiting on either side and none crossing:
-  else if (shared_variables->CrossingCount == 0 &&
-    shared_variables->AtoBWaitCount == 0 && shared_variables->BtoAWaitCount == 0)
-  {
-    shared_variables->CrossingDirection = None;
-    shared_variables->CrossedCount == 0;
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
+  else if (CrossingCount == 0 &&
+    AtoBWaitCount == 0 && BtoAWaitCount == 0) {
+    CrossingDirection = None;
+    CrossedCount == 0;
+    semsignal(&mutex);
   }
   // continue as none:
-  else
-  {
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
+  else {
+    semsignal(&mutex);
   }
 
-  if (shmdt(shared_variables) == -1)
-  {
+  if (shmdt(shared_variables) == -1) {
 		perror("shmdt failed");
 		exit(EXIT_FAILURE);
 	}
@@ -192,80 +132,77 @@ void ToB(void)
 	exit(EXIT_SUCCESS);
 }
 
-void ToA(void)
-{
-  int semid = get_semid((key_t)SEMAPHORE_KEY);
-  int shmid = get_shmid((key_t)SEMAPHORE_KEY);
-  struct shared_variable_struct * shared_variables = shmat(shmid, 0, 0);
-  semaphore_wait(semid, SEMAPHORE_MUTEX);
+void *ToA(void *arg) {
+  int tid = (int *)arg;
+	semwait(&mutex);
+
+  printf("Baboon B to A %d Created\n", tid);
+  fflush(stdout);
 
   // Continue in same direction, or start going in this direction
   // Crossing direction = (BtoA or none) and Crossing count < 5, and total < 10:
-  if ((shared_variables->CrossingDirection == BtoA || shared_variables->CrossingDirection == None) &&
-    shared_variables->CrossingCount < 5 && (shared_variables->CrossedCount + shared_variables->CrossingCount) < 10)
-  {
-    printf("B to A about to cross %d\n", getpid());
-    shared_variables->CrossingDirection = BtoA;
-    shared_variables->CrossingCount++;
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
+  if ((CrossingDirection == Xing_BtoA || CrossingDirection == None) &&
+    CrossingCount < 5 && (CrossedCount + CrossingCount) < 10) {
+    printf("B to A about to cross %d\n", tid);
+    fflush(stdout);
+    CrossingDirection = Xing_BtoA;
+    CrossingCount++;
+    semsignal(&mutex);
   }
   // wait to cross:
-  else
-  {
-    printf("B to A waiting to cross %d\n", getpid());
-    shared_variables->BtoAWaitCount++;
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
-    semaphore_wait(semid, SEMAPHORE_BtoA);
+  else {
+    printf("B to A waiting to cross %d\n", tid);
+    fflush(stdout);
+    BtoAWaitCount++;
+    semsignal(&mutex);
+    semwait(&BtoA);
 
-    printf("B to A about to cross %d\n", getpid());
-    shared_variables->BtoAWaitCount--;
-    shared_variables->CrossingCount++;
-    shared_variables->CrossingDirection = BtoA;
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
+    printf("B to A about to cross %d\n", tid);
+    fflush(stdout);
+    BtoAWaitCount--;
+    CrossingCount++;
+    CrossingDirection = Xing_BtoA;
+    semsignal(&mutex);
   }
 
   stall(CROSS_ROPE_STALL_TIME);
-  printf("B to A successfully crossed %d\n", getpid());
-  semaphore_wait(semid, SEMAPHORE_MUTEX);
-  shared_variables->CrossedCount++;
-  shared_variables->CrossingCount--;
+  printf("B to A successfully crossed %d\n", tid);
+  fflush(stdout);
+  semwait(&mutex);
+  CrossedCount++;
+  CrossingCount--;
 
   // keep going in this direction
   // nonzero BtoAWaitCount and (total <10 or (total >= 10 and BtoAWaitCount = 0):
-  if (shared_variables->BtoAWaitCount != 0 &&
-    (((shared_variables->CrossedCount + shared_variables->CrossingCount) < 10) ||
-    ((shared_variables->CrossedCount + shared_variables->CrossingCount) >= 10 &&
-    shared_variables->BtoAWaitCount == 0)))
-  {
-    semaphore_signal(semid,SEMAPHORE_BtoA);
+  if (BtoAWaitCount != 0 &&
+    (((CrossedCount + CrossingCount) < 10) ||
+    ((CrossedCount + CrossingCount) >= 10 &&
+    BtoAWaitCount == 0))) {
+    semsignal(&BtoA);
   }
   // switch directions
   // none crossing and nonzero BtoAWaitCount and (BtoAWaitCount = 0 or total >= 10):
-  else if (shared_variables->CrossingCount == 0 && shared_variables->BtoAWaitCount !=0 &&
-    (shared_variables->BtoAWaitCount == 0 ||
-      (shared_variables->CrossedCount + shared_variables->CrossingCount) >= 10))
-  {
-    shared_variables->CrossingDirection = BtoA;
-    shared_variables->CrossedCount = 0;
-    semaphore_signal(semid, SEMAPHORE_BtoA);
+  else if (CrossingCount == 0 && BtoAWaitCount !=0 &&
+    (BtoAWaitCount == 0 ||
+      (CrossedCount + CrossingCount) >= 10)) {
+    CrossingDirection = Xing_BtoA;
+    CrossedCount = 0;
+    semsignal(&BtoA);
   }
   // change direction to none
   // none waiting on either side and none crossing:
-  else if (shared_variables->CrossingCount == 0 &&
-    shared_variables->BtoAWaitCount == 0 && shared_variables->BtoAWaitCount == 0)
-  {
-    shared_variables->CrossingDirection = None;
-    shared_variables->CrossedCount == 0;
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
+  else if (CrossingCount == 0 &&
+    BtoAWaitCount == 0 && BtoAWaitCount == 0) {
+    CrossingDirection = None;
+    CrossedCount == 0;
+    semsignal(&mutex);
   }
   // continue as none:
-  else
-  {
-    semaphore_signal(semid, SEMAPHORE_MUTEX);
+  else {
+    semsignal(&mutex);
   }
 
-  if (shmdt(shared_variables) == -1)
-  {
+  if (shmdt(shared_variables) == -1) {
 		perror("shmdt failed");
 		exit(EXIT_FAILURE);
 	}
@@ -273,58 +210,16 @@ void ToA(void)
 	exit(EXIT_SUCCESS);
 }
 
-void semaphore_wait(int semid, int semnumber)
-{
-  struct sembuf wait_buffer;
-  wait_buffer.sem_num = semnumber;
-  wait_buffer.sem_op = -1;
-  wait_buffer.sem_flg = 0;
-  if (semop(semid, &wait_buffer, 1) == -1)
-  {
-    perror("semaphore_wait failed");
-    exit(EXIT_FAILURE);
-  }
+void semwait(sem_t *sem) {
+	if (sem_wait(sem) < 0) {
+		perror("sem_wait");
+		exit(EXIT_FAILURE);
+	}
 }
 
-void semaphore_signal(int semid, int semnumber)
-{
-  struct sembuf signal_buffer;
-  signal_buffer.sem_num = semnumber;
-  signal_buffer.sem_op = 1;
-  signal_buffer.sem_flg = 0;
-
-  if (semop(semid, &signal_buffer, 1) == -1)
-  {
-    perror("semaphore_signal failed");
-    exit(EXIT_FAILURE);
-  }
-}
-
-void stall(int iterations)
-{
-  int i;
-  while(i < iterations)
-    i++;
-}
-
-int get_semid(key_t semkey)
-{
-  int value = semget(semkey, NUMBER_OF_SEMAPHORES, 0777 | IPC_CREAT);
-  if (value == -1)
-  {
-    perror("semget failed");
-    exit(EXIT_FAILURE);
-  }
-  return value;
-}
-
-int get_shmid(key_t shmkey)
-{
-  int value = shmget(shmkey, sizeof(struct shared_variable_struct), 0777 | IPC_CREAT);
-  if (value == -1)
-  {
-    perror("shmkey failed");
-    exit(EXIT_FAILURE);
-  }
-  return value;
+void semsignal(sem_t *sem) {
+	if (sem_post(sem) < 0) {
+		perror("sem_post");
+		exit(EXIT_FAILURE);
+	}
 }
