@@ -1,7 +1,7 @@
 // Michael Girbino -- mjg159
 // EECS 338 HW7: Baboon Crossing - POSIX threads implementation
 
-#include "baboon_crossing.h"
+#include "baboon_xing_threads.h"
 
 sem_t AtoB, BtoA, mutex;
 
@@ -14,7 +14,7 @@ direction CrossingDirection;
 int main(int argc, char *argv[]) {
   pthread_t threads[NUM_THREADS];
   int error_check;
-  enum direction atob_or_btoa;
+  direction atob_or_btoa;
 
   //initialize semaphores
 	if (sem_init(&AtoB, 0, (unsigned int)0) < 0
@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < NUM_THREADS; i++) {
     void *thread_func;//the function to call
 
-    atob_or_btoa = (getRand()%2) ? Xing_AtoB : Xing_BtoA;
+    atob_or_btoa = (rand()%2) ? Xing_AtoB : Xing_BtoA;
 
     if (atob_or_btoa == Xing_AtoB) {//if random amount < 0
       thread_func = ToB;
@@ -36,16 +36,16 @@ int main(int argc, char *argv[]) {
     else {//else amount > 0
       thread_func = ToA;
     }
-    if ((errorCheck = pthread_create(&threads[i], NULL, thread_func, &i))) {
-      fprintf(stderr, "error: pthread_create, %d\n", errorCheck);
+    if ((error_check = pthread_create(&threads[i], NULL, thread_func, &i))) {
+      fprintf(stderr, "error: pthread_create, %d\n", error_check);
       return EXIT_FAILURE;
     }
     stall(BABOON_CREATE_STALL_TIME);
   }
 
   for (int i = 0; i < NUM_THREADS; ++i) {
-    if ((errorCheck = pthread_join(threads[i], NULL))) {
-      fprintf(stderr, "error: pthread_join, %d\n", errorCheck);
+    if ((error_check = pthread_join(threads[i], NULL))) {
+      fprintf(stderr, "error: pthread_join, %d\n", error_check);
     }
   }
 
@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
 }
 
 void *ToB(void *arg) {
-  int tid = (int *)arg;
+  int *tid = (int)arg;
 	semwait(&mutex);
 
   printf("Baboon A to B %d Created\n", tid);
@@ -97,10 +97,10 @@ void *ToB(void *arg) {
   // keep going in this direction
   // nonzero AtoBWaitCount and (total <10 or (total >= 10 and BtoAWaitCount = 0):
   if (AtoBWaitCount != 0 &&
-    (((CrossedCount + CrossingCount) < 10) ||
-    ((CrossedCount + CrossingCount) >= 10 &&
-    BtoAWaitCount == 0))) {
-    semsignal(&AtoB)
+    ( ((CrossedCount + CrossingCount) < 10) ||
+    ( (CrossedCount + CrossingCount) >= 10 &&
+    BtoAWaitCount == 0) ) ) {
+    semsignal(&AtoB);
   }
   // switch directions
   // none crossing and nonzero BtoAWaitCount and (AtoBWaitCount = 0 or total >= 10):
@@ -124,16 +124,11 @@ void *ToB(void *arg) {
     semsignal(&mutex);
   }
 
-  if (shmdt(shared_variables) == -1) {
-		perror("shmdt failed");
-		exit(EXIT_FAILURE);
-	}
-
-	exit(EXIT_SUCCESS);
+  pthread_exit(NULL);
 }
 
 void *ToA(void *arg) {
-  int tid = (int *)arg;
+  int tid = (int)arg;
 	semwait(&mutex);
 
   printf("Baboon B to A %d Created\n", tid);
@@ -202,12 +197,13 @@ void *ToA(void *arg) {
     semsignal(&mutex);
   }
 
-  if (shmdt(shared_variables) == -1) {
-		perror("shmdt failed");
-		exit(EXIT_FAILURE);
-	}
+  pthread_exit(NULL);
+}
 
-	exit(EXIT_SUCCESS);
+void stall(int iterations) {
+  int i;
+  while(i < iterations)
+    i++;
 }
 
 void semwait(sem_t *sem) {
